@@ -1,8 +1,9 @@
-package pkg
+package git
 
 import (
 	"encoding/json"
 	"fmt"
+	"golang.org/x/sync/errgroup"
 	"io"
 	"net/http"
 	"os"
@@ -11,11 +12,12 @@ import (
 const defaultApiURL = "https://api.github.com"
 
 type OrgCloner struct {
-	apiURL  string
-	orgName string
-	syncDir string
-	token   string
-	force   bool
+	apiURL            string
+	orgName           string
+	syncDir           string
+	token             string
+	force             bool
+	workingBranchName string
 }
 
 func NewOrgCloner(orgName string, options ...func(cloner *OrgCloner)) *OrgCloner {
@@ -47,16 +49,31 @@ func WithSyncDir(dir string) func(cloner *OrgCloner) {
 	}
 }
 
+func WithWorkingBranchName(branchName string) func(cloner *OrgCloner) {
+	return func(s *OrgCloner) {
+		s.workingBranchName = branchName
+	}
+}
+
 func WithForce(force bool) func(cloner *OrgCloner) {
 	return func(s *OrgCloner) {
 		s.force = force
 	}
 }
 
+func (o *OrgCloner) SyncRepos(repoNames []string) ([]*Repo, error) {
+	return o.syncRepos(repoNames)
+}
+
 func (o *OrgCloner) SyncAllRepos() ([]*Repo, error) {
+	return o.syncRepos(nil)
+}
+
+func (o *OrgCloner) syncRepos(repoNames []string) ([]*Repo, error) {
+	// TODO: No need to get all repos if repoNames is populated
 	allRepos, err := o.getAllRepos()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to get all repos: %w", err)
 	}
 	dir := o.syncDir
 	if dir == "" {
@@ -67,12 +84,35 @@ func (o *OrgCloner) SyncAllRepos() ([]*Repo, error) {
 		dir = path
 	}
 
-	for _, r := range allRepos {
-		if err := r.Sync(dir, o.force); err != nil {
-			return nil, fmt.Errorf("failed to sync repo %s: %v", r.Name, err)
+	var reposToSync []*Repo
+	if repoNames == nil {
+		reposToSync = allRepos
+	} else {
+		for _, wantRepo := range repoNames {
+			for _, gotRepo := range allRepos {
+				if gotRepo.Name == wantRepo {
+					reposToSync = append(reposToSync, gotRepo)
+				}
+			}
 		}
 	}
-	return allRepos, nil
+
+	eg := &errgroup.Group{}
+	eg.SetLimit(10)
+	for _, r := range reposToSync {
+		r := r
+		eg.Go(func() error {
+			if err := r.Sync(dir, o.force, o.workingBranchName); err != nil {
+				return fmt.Errorf("failed to sync repo %s: %v", r.Name, err)
+			}
+			return nil
+		})
+	}
+	if err := eg.Wait(); err != nil {
+		return nil, fmt.Errorf("failed to sync repos: %w", err)
+	}
+
+	return reposToSync, nil
 }
 
 func (o *OrgCloner) getAllRepos() ([]*Repo, error) {

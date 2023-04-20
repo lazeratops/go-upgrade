@@ -1,4 +1,4 @@
-package pkg
+package git
 
 import (
 	"github.com/stretchr/testify/require"

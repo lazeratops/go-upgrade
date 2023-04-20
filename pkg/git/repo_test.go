@@ -1,4 +1,4 @@
-package pkg
+package git
 
 import (
 	"github.com/stretchr/testify/assert"
@@ -33,7 +33,7 @@ func TestSyncRepo(t *testing.T) {
 	for _, tc := range cases {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
-			gotErr := tc.repo.Sync(dir, tc.force)
+			gotErr := tc.repo.Sync(dir, tc.force, "upgrade-branch")
 			assert.ErrorIs(t, gotErr, tc.wantErr)
 		})
 	}
